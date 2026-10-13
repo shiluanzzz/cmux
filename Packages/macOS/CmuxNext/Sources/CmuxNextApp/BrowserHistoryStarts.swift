@@ -20,6 +20,8 @@ final class BrowserHistoryStarts {
     private var waiting: [String: Waiting] = [:]
     /// How each held page started, by tab id (`debug.browser.page_status` `history_start`).
     var outcomes: [String: String] = [:]
+    /// Tabs whose new page restored its engine's own history, until `takeEngineRestored`.
+    private var engineRestored: Set<String> = []
 
     /// The blank page for restored tab `tab` at `url`, waiting for its saved history; nil when
     /// the tab opens as before: a page the user opened now, a remote machine's tab, a
@@ -37,6 +39,40 @@ final class BrowserHistoryStarts {
         let page = cache.webKit.makeWebKitTab(id: BrowserTabID(rawValue: key), profile: cache.browserProfile?(key) ?? .default)
         service.historyStarts.hold(page, url: url, tabID: key)
         return cache.install(page, for: key)
+    }
+
+    /// `configuration` for restored Chromium tab `tab`, with the navigation state saved with its
+    /// history when it was saved at the page's address (cx-il4fv): Chromium restores its back list
+    /// and page state, and loads the address itself when it cannot. Tabs that open as before, as
+    /// in `page`, and pages with a local file in their history (Chromium's file access is not
+    /// bounded to a folder) keep `configuration`.
+    static func chromium(_ tab: TabModel, _ configuration: BrowserTabConfiguration, cache: TabContentCache) async -> BrowserTabConfiguration {
+        let service = cache.browserTabs, key = tab.id, daemon = service.daemon(for: tab)
+        guard configuration.restoreState == nil, configuration.machineStore == nil, let url = configuration.initialURL,
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""), MachineBrowserRecord(url: url) == nil,
+              tab.isFrontendOwned, !service.isIncognitoTab(key), !service.wasOpenedHere(tab), daemon.isLocal,
+              daemon.supports(DaemonCapabilities.shared.frontendBrowserHistory) else { return configuration }
+        let saved = await service.fetchHistory(daemon, tab.surface)
+        guard let state = BrowserHistoryWriter.restoreState(saved, at: url, engine: .cef),
+              !(saved?.entries ?? []).contains(where: { URL(string: $0.url)?.isFileURL ?? true }) else {
+            service.historyStarts.outcomes[key] = saved?.engineState == nil ? "address-no-state" : "address-file-access"
+            return configuration
+        }
+        var restored = configuration
+        restored.restoreState = state
+        service.historyStarts.outcomes[key] = "engine"
+        service.historyStarts.engineRestored.insert(key)
+        return restored
+    }
+
+    /// True once after tab `tabID`'s new page restored its engine's own history; a Chromium page
+    /// then also scrolls to the position saved at quit once it loads (WebKit's did at its start).
+    func takeEngineRestored(_ tabID: String, page: any BrowserTab, saved: FrontendBrowserHistory?) -> Bool {
+        guard engineRestored.remove(tabID) != nil else { return false }
+        if page.engineKind == .cef, let saved, saved.entries.indices.contains(saved.index), let y = saved.entries[saved.index].scrollY {
+            BrowserRestoreScroll.onLoad(page, to: y)
+        }
+        return true
     }
 
     func hold(_ page: WebKitTab, url: URL, tabID: String) {
@@ -73,6 +109,7 @@ final class BrowserHistoryStarts {
                 // older than the one measured at quit.
                 if let saved, let y = saved.entries[saved.index].scrollY { page.scrollOnLoad(to: y) }
                 outcomes[tabID] = "engine"
+                engineRestored.insert(tabID)
                 return true
             }
             outcomes[tabID] = "address-state-refused"
