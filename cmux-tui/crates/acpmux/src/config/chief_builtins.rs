@@ -171,6 +171,11 @@ pub fn env(b: &Builtin, family: &str, ctx: &Context) -> Result<BTreeMap<String, 
             } else {
                 flags(&mut env, &["DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_CLAUDE_MDS"], "1");
                 env.insert("SUBROUTER_SESSION_KEY".into(), key("turn"));
+                // No mid-conversation system message: Claude Code would end
+                // every request with its environment and date after the
+                // Chief's last cache mark (~450 uncached tokens a turn) and
+                // reads this capability only from its process env.
+                env.insert("CLAUDE_CODE_MODEL_CAPABILITIES".into(), "-mid_conv_system".into());
             }
         }
         Role::Compact(k) => {

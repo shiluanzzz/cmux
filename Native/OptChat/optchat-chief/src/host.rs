@@ -180,6 +180,15 @@ pub fn turn_preset(
     };
     if family == Family::Claude {
         env.extend(session_dir::QUIET_ENV.map(|(k, v)| (k.to_owned(), v.to_owned())));
+        // Also acpmux's built-in turn env (`chief_builtins.rs`), for a daemon
+        // older than the built-in presets: no mid-conversation system
+        // message, which ended every request after our last mark (about 450
+        // uncached input tokens a warm turn). Claude Code reads it only from
+        // its process env, not from settings.
+        env.insert(
+            "CLAUDE_CODE_MODEL_CAPABILITIES".to_owned(),
+            "-mid_conv_system".to_owned(),
+        );
     }
     if family == Family::Codex {
         env.insert(
