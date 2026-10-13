@@ -62,6 +62,23 @@ final class BrowserHistoryStarts {
             outcomes[tabID] = "navigated"
             return false
         }
+        let files = BrowserHistoryWriter.keepsFileAccess(saved?.entries.compactMap { URL(string: $0.url) } ?? [], shown: entry.url)
+        if let state = BrowserHistoryWriter.restoreState(saved, at: entry.url, engine: .webkit), files {
+            // A local page first loads with read access to its folder, which its restored entries
+            // (all in that folder) then share; restored without it, WebKit would read them with
+            // access to every file. The restore replaces this load.
+            if entry.url.isFileURL { page.load(entry.url) }
+            if page.restore(state), page.webView.backForwardList.currentItem?.url.absoluteString == entry.url.absoluteString {
+                // WebKit keeps the scroll position it last recorded for the page, which can be
+                // older than the one measured at quit.
+                if let saved, let y = saved.entries[saved.index].scrollY { page.scrollOnLoad(to: y) }
+                outcomes[tabID] = "engine"
+                return true
+            }
+            outcomes[tabID] = "address-state-refused"
+            if !entry.url.isFileURL { page.load(entry.url) }
+            return false
+        }
         outcomes[tabID] = saved == nil ? "address" : saved?.engineState == nil ? "address-no-state" : "address-file-access"
         page.load(entry.url)
         return false
