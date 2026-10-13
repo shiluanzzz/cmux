@@ -162,6 +162,18 @@ async fn a_chief_outside_the_app_installs_its_built_in_presets_without_env() {
         "optchat-1a2b3c4d-compact"
     );
 
+    // A Claude turn: no mid-conversation system message (it would end every
+    // request after the Chief's last cache mark, about 450 uncached tokens a
+    // turn). Claude Code reads the capability only from its process env.
+    let claude_turn = "optchat-chief-1a2b3c4d";
+    let r = chief
+        .call("_acpmux/presets", json!({"name": claude_turn, "set": {"harness": "fclaude"}}))
+        .await;
+    assert!(r.get("error").is_none(), "{r}");
+    let env = stored_env(&mut chief, claude_turn).await;
+    assert_eq!(env["CLAUDE_CODE_MODEL_CAPABILITIES"], "-mid_conv_system", "{env}");
+    assert_eq!(env["SUBROUTER_SESSION_KEY"], "optchat-1a2b3c4d-turn", "{env}");
+
     // Codex: the paths come from the daemon's own Chief home, never the client.
     let turn = "optchat-chief-codex-1a2b3c4d";
     let r =
